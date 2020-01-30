@@ -2,6 +2,9 @@ var xml2js = require('xml2js');
 var xml2jsOptions = xml2js.defaults['0.1'];
 var EventEmitter = require('events').EventEmitter;
 
+// Add tag name processor option to remove namespaces
+xml2jsOptions.tagNameProcessors = [xml2js.processors.stripPrefix];
+
 try {
     // zipfile is an optional dependency:
     var ZipFile = require("zipfile").ZipFile;
@@ -275,11 +278,10 @@ class EPub extends EventEmitter {
     
         this.version = rootfile['@'].version || '2.0';
     
-        var i, len, keys, keyparts, key;
+        var i, len, keys, key;
         keys = Object.keys(rootfile);
         for (i = 0, len = keys.length; i < len; i++) {
-            keyparts = keys[i].split(":");
-            key = (keyparts.pop() || "").toLowerCase().trim();
+            key = keys[i].toLowerCase().trim();
             switch (key) {
             case "metadata":
                 this.parseMetadata(rootfile[keys[i]]);
@@ -309,12 +311,11 @@ class EPub extends EventEmitter {
      *  Parses "metadata" block (book metadata, title, author etc.)
      **/
     parseMetadata(metadata) {
-        var i, j, len, keys, keyparts, key;
+        var i, j, len, keys, key;
     
         keys = Object.keys(metadata);
         for (i = 0, len = keys.length; i < len; i++) {
-            keyparts = keys[i].split(":");
-            key = (keyparts.pop() || "").toLowerCase().trim();
+            key = keys[i].toLowerCase().trim();
             switch (key) {
             case "publisher":
                 if (Array.isArray(metadata[keys[i]])) {
