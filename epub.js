@@ -58,12 +58,12 @@ try {
 class EPub extends EventEmitter {
     constructor(fname, imageroot, linkroot) {
         super();
-        
+
         this.filename = fname;
-    
+
         this.imageroot = (imageroot || "/images/").trim();
         this.linkroot = (linkroot || "/links/").trim();
-    
+
         if (this.imageroot.substr(-1) != "/") {
             this.imageroot += "/";
         }
@@ -71,27 +71,29 @@ class EPub extends EventEmitter {
             this.linkroot += "/";
         }
     }
-    
+
     /**
-     *  EPub#parse() -> undefined
-     *
+     *  EPub#parse(options) -> undefined
+     *  - options (object): An optional options object to override xml2jsOptions
      *  Starts the parser, needs to be called by the script
      **/
-    parse() {
+    parse(options = {}) {
+        Object.assign(xml2jsOptions, options.xml2jsOptions);
+
         this.containerFile = false;
         this.mimeFile = false;
         this.rootFile = false;
-    
+
         this.metadata = {};
         this.manifest = {};
         this.guide = [];
         this.spine    = {toc: false, contents: []};
         this.flow = [];
         this.toc = [];
-    
+
         this.open();
     }
-    
+
 
     /**
      *  EPub#open() -> undefined
@@ -106,15 +108,15 @@ class EPub extends EventEmitter {
             this.emit("error", new Error("Invalid/missing file"));
             return;
         }
-    
+
         if (!this.zip.names || !this.zip.names.length) {
             this.emit("error", new Error("No files in archive"));
             return;
         }
-    
+
         this.checkMimeType();
     };
-    
+
     /**
      *  EPub#checkMimeType() -> undefined
      *
@@ -123,7 +125,7 @@ class EPub extends EventEmitter {
      **/
     checkMimeType() {
         var i, len;
-    
+
         for (i = 0, len = this.zip.names.length; i < len; i++) {
             if (this.zip.names[i].toLowerCase() == "mimetype") {
                 this.mimeFile = this.zip.names[i];
@@ -140,16 +142,16 @@ class EPub extends EventEmitter {
                 return;
             }
             var txt = data.toString("utf-8").toLowerCase().trim();
-    
+
             if (txt  !=  "application/epub+zip") {
                 this.emit("error", new Error("Unsupported mime type"));
                 return;
             }
-    
+
             this.getRootFiles();
         }).bind(this));
     };
-    
+
     /**
      *  EPub#getRootFiles() -> undefined
      *
@@ -169,7 +171,7 @@ class EPub extends EventEmitter {
             this.emit("error", new Error("No container file in archive"));
             return;
         }
-    
+
         this.zip.readFile(this.containerFile, (function (err, data) {
             if (err) {
                 this.emit("error", new Error("Reading archive failed"));
@@ -177,20 +179,20 @@ class EPub extends EventEmitter {
             }
             var xml = data.toString("utf-8").toLowerCase().trim(),
                 xmlparser = new xml2js.Parser(xml2jsOptions);
-    
+
             xmlparser.on("end", (function (result) {
-    
+
                 if (!result.rootfiles || !result.rootfiles.rootfile) {
                     this.emit("error", new Error("No rootfiles found"));
                     console.dir(result);
                     return;
                 }
-    
+
                 var rootfile = result.rootfiles.rootfile,
                     filename = false, i, len;
-    
+
                 if (Array.isArray(rootfile)) {
-    
+
                     for (i = 0, len = rootfile.length; i < len; i++) {
                         if (rootfile[i]["@"]["media-type"] &&
                                 rootfile[i]["@"]["media-type"] == "application/oebps-package+xml" &&
@@ -199,7 +201,7 @@ class EPub extends EventEmitter {
                             break;
                         }
                     }
-    
+
                 } else if (rootfile["@"]) {
                     if (rootfile["@"]["media-type"]  !=  "application/oebps-package+xml" || !rootfile["@"]["full-path"]) {
                         this.emit("error", new Error("Rootfile in unknown format"));
@@ -207,40 +209,40 @@ class EPub extends EventEmitter {
                     }
                     filename = rootfile["@"]["full-path"].toLowerCase().trim();
                 }
-    
+
                 if (!filename) {
                     this.emit("error", new Error("Empty rootfile"));
                     return;
                 }
-    
-    
+
+
                 for (i = 0, len = this.zip.names.length; i < len; i++) {
                     if (this.zip.names[i].toLowerCase() == filename) {
                         this.rootFile = this.zip.names[i];
                         break;
                     }
                 }
-    
+
                 if (!this.rootFile) {
                     this.emit("error", new Error("Rootfile not found from archive"));
                     return;
                 }
-    
+
                 this.handleRootFile();
-    
+
             }).bind(this));
-    
+
             xmlparser.on("error", (function (err) {
-                this.emit("error", new Error("Parsing container XML failed"));
+                this.emit("error", new Error("Parsing container XML failed in getRootFiles: " + err.message));
                 return;
             }).bind(this));
-    
+
             xmlparser.parseString(xml);
-    
-    
+
+
         }).bind(this));
     };
-    
+
     /**
      *  EPub#handleRootFile() -> undefined
      *
@@ -255,19 +257,19 @@ class EPub extends EventEmitter {
             }
             var xml = data.toString("utf-8"),
                 xmlparser = new xml2js.Parser(xml2jsOptions);
-    
+
             xmlparser.on("end", this.parseRootFile.bind(this));
-    
+
             xmlparser.on("error", (function (err) {
-                this.emit("error", new Error("Parsing container XML failed"));
+                this.emit("error", new Error("Parsing container XML failed in handleRootFile: " + err.message));
                 return;
             }).bind(this));
-    
+
             xmlparser.parseString(xml);
-    
+
         }).bind(this));
     };
-    
+
     /**
      *  EPub#parseRootFile() -> undefined
      *
@@ -275,13 +277,14 @@ class EPub extends EventEmitter {
      *  Emits "end" if no TOC
      **/
     parseRootFile(rootfile) {
-    
+
         this.version = rootfile['@'].version || '2.0';
-    
-        var i, len, keys, key;
+
+        var i, len, keys, keyparts, key;
         keys = Object.keys(rootfile);
         for (i = 0, len = keys.length; i < len; i++) {
-            key = keys[i].toLowerCase().trim();
+            keyparts = keys[i].split(":");
+            key = (keyparts.pop() || "").toLowerCase().trim();
             switch (key) {
             case "metadata":
                 this.parseMetadata(rootfile[keys[i]]);
@@ -297,25 +300,26 @@ class EPub extends EventEmitter {
                 break;
             }
         }
-    
+
         if (this.spine.toc) {
             this.parseTOC();
         } else {
             this.emit("end");
         }
     };
-    
+
     /**
      *  EPub#parseMetadata() -> undefined
      *
      *  Parses "metadata" block (book metadata, title, author etc.)
      **/
     parseMetadata(metadata) {
-        var i, j, len, keys, key;
-    
+        var i, j, len, keys, keyparts, key;
+
         keys = Object.keys(metadata);
         for (i = 0, len = keys.length; i < len; i++) {
-            key = keys[i].toLowerCase().trim();
+            keyparts = keys[i].split(":");
+            key = (keyparts.pop() || "").toLowerCase().trim();
             switch (key) {
             case "publisher":
                 if (Array.isArray(metadata[keys[i]])) {
@@ -387,7 +391,7 @@ class EPub extends EventEmitter {
                 break;
             }
         }
-    
+
         var metas = metadata['meta'] || {};
         Object.keys(metas).forEach(function(key) {
             var meta = metas[key];
@@ -398,13 +402,13 @@ class EPub extends EventEmitter {
             if (meta['#'] && meta['@'].property) {
                 this.metadata[meta['@'].property] = meta['#'];
             }
-    
+
             if(meta.name && meta.name =="cover"){
                 this.metadata[meta.name] = meta.content;
             }
         }, this);
     };
-    
+
     /**
      *  EPub#parseManifest() -> undefined
      *
@@ -414,23 +418,23 @@ class EPub extends EventEmitter {
         var i, len, path = this.rootFile.split("/"), element, path_str;
         path.pop();
         path_str = path.join("/");
-    
+
         if (manifest.item) {
             for (i = 0, len = manifest.item.length; i < len; i++) {
                 if (manifest.item[i]['@']) {
                     element = manifest.item[i]['@'];
-    
+
                     if (element.href && element.href.substr(0, path_str.length)  !=  path_str) {
                         element.href = path.concat([element.href]).join("/");
                     }
-    
+
                     this.manifest[manifest.item[i]['@'].id] = element;
-    
+
                 }
             }
         }
     };
-    
+
      /**
      *  EPub#parseGuide() -> undefined
      *
@@ -461,7 +465,7 @@ class EPub extends EventEmitter {
             }
         }
     };
-    
+
     /**
      *  EPub#parseSpine() -> undefined
      *
@@ -470,11 +474,11 @@ class EPub extends EventEmitter {
     parseSpine(spine) {
         var i, len, path = this.rootFile.split("/"), element;
         path.pop();
-    
+
         if (spine['@'] && spine['@'].toc) {
             this.spine.toc = this.manifest[spine['@'].toc] || false;
         }
-    
+
         if (spine.itemref) {
             if(!Array.isArray(spine.itemref)){
                 spine.itemref = [spine.itemref];
@@ -489,7 +493,7 @@ class EPub extends EventEmitter {
         }
         this.flow = this.spine.contents;
     };
-    
+
     /**
      *  EPub#parseTOC() -> undefined
      *
@@ -498,12 +502,12 @@ class EPub extends EventEmitter {
     parseTOC() {
         var i, len, path = this.spine.toc.href.split("/"), id_list = {}, keys;
         path.pop();
-    
+
         keys = Object.keys(this.manifest);
         for (i = 0, len = keys.length; i < len; i++) {
             id_list[this.manifest[keys[i]].href] = keys[i];
         }
-    
+
         this.zip.readFile(this.spine.toc.href, (function (err, data) {
             if (err) {
                 this.emit("error", new Error("Reading archive failed"));
@@ -511,25 +515,25 @@ class EPub extends EventEmitter {
             }
             var xml = data.toString("utf-8"),
                 xmlparser = new xml2js.Parser(xml2jsOptions);
-    
+
             xmlparser.on("end", (function (result) {
                 if (result.navMap && result.navMap.navPoint) {
                     this.toc = this.walkNavMap(result.navMap.navPoint, path, id_list);
                 }
-    
+
                 this.emit("end");
             }).bind(this));
-    
+
             xmlparser.on("error", (function (err) {
-                this.emit("error", new Error("Parsing container XML failed"));
+                this.emit("error", new Error("Parsing container XML failed in TOC: " + err.message));
                 return;
             }).bind(this));
-    
+
             xmlparser.parseString(xml);
-    
+
         }).bind(this));
     };
-    
+
     /**
      *  EPub#walkNavMap(branch, path, id_list,[, level]) -> Array
      *  - branch (Array | Object): NCX NavPoint object
@@ -542,21 +546,21 @@ class EPub extends EventEmitter {
      **/
     walkNavMap(branch, path, id_list, level) {
         level = level || 0;
-    
+
         // don't go too far
         if (level > 7) {
             return [];
         }
-    
+
         var output = [];
-    
+
         if (!Array.isArray(branch)) {
             branch = [branch];
         }
-    
+
         for (var i = 0; i < branch.length; i++) {
             if (branch[i].navLabel) {
-    
+
                 var title = '';
                 if (branch[i].navLabel && typeof branch[i].navLabel.text == 'string') {
                     title = branch[i].navLabel && branch[i].navLabel.text || branch[i].navLabel===branch[i].navLabel && branch[i].navLabel.text.length > 0  ?
@@ -570,17 +574,17 @@ class EPub extends EventEmitter {
                 if (branch[i].content && branch[i].content["@"] && typeof branch[i].content["@"].src == 'string') {
                     href = branch[i].content["@"].src.trim();
                 }
-    
+
                 var element = {
                     level: level,
                     order: order,
                     title: title
                 };
-    
+
                 if (href) {
                     href = path.concat([href]).join("/");
                     element.href = href;
-    
+
                     if (id_list[element.href]) {
                         // link existing object
                         element = this.manifest[id_list[element.href]];
@@ -592,7 +596,7 @@ class EPub extends EventEmitter {
                         element.href = href;
                         element.id =  (branch[i]["@"] && branch[i]["@"].id || "").trim();
                     }
-    
+
                     output.push(element);
                 }
             }
@@ -602,7 +606,7 @@ class EPub extends EventEmitter {
         }
         return output;
     };
-    
+
     /**
      *  EPub#getChapter(id, callback) -> undefined
      *  - id (String): Manifest id value for a chapter
@@ -617,88 +621,88 @@ class EPub extends EventEmitter {
                 callback(err);
                 return;
             }
-    
+
             var i, len, path = this.rootFile.split("/"), keys = Object.keys(this.manifest);
             path.pop();
-    
+
             // remove linebreaks (no multi line matches in JS regex!)
             str = str.replace(/\r?\n/g, "\u0000");
-    
+
             // keep only <body> contents
             str.replace(/<body[^>]*?>(.*)<\/body[^>]*?>/i, function (o, d) {
                 str = d.trim();
             });
-    
+
             // remove <script> blocks if any
             str = str.replace(/<script[^>]*?>(.*?)<\/script[^>]*?>/ig, function (o, s) {
                 return "";
             });
-    
+
             // remove <style> blocks if any
             str = str.replace(/<style[^>]*?>(.*?)<\/style[^>]*?>/ig, function (o, s) {
                 return "";
             });
-    
+
             // remove onEvent handlers
             str = str.replace(/(\s)(on\w+)(\s*=\s*["']?[^"'\s>]*?["'\s>])/g, function (o, a, b, c) {
                 return a + "skip-" + b + c;
             });
-    
+
             // replace images
             str = str.replace(/(\ssrc\s*=\s*["']?)([^"'\s>]*?)(["'\s>])/g, (function (o, a, b, c) {
                 var img = path.concat([b]).join("/").trim(),
                     element;
-    
+
                 for (i = 0, len = keys.length; i < len; i++) {
                     if (this.manifest[keys[i]].href == img) {
                         element = this.manifest[keys[i]];
                         break;
                     }
                 }
-    
+
                 // include only images from manifest
                 if (element) {
                     return a + this.imageroot + element.id + "/" + img + c;
                 } else {
                     return "";
                 }
-    
+
             }).bind(this));
-    
+
             // replace links
             str = str.replace(/(\shref\s*=\s*["']?)([^"'\s>]*?)(["'\s>])/g, (function (o, a, b, c) {
                 var linkparts = b && b.split("#");
                 var link = linkparts.length ? path.concat([(linkparts.shift() || "")]).join("/").trim() : '',
                     element;
-    
+
                 for (i = 0, len = keys.length; i < len; i++) {
                     if (this.manifest[keys[i]].href.split("#")[0] == link) {
                         element = this.manifest[keys[i]];
                         break;
                     }
                 }
-    
+
                 if (linkparts.length) {
                     link  +=  "#" + linkparts.join("#");
                 }
-    
+
                 // include only images from manifest
                 if (element) {
                     return a + this.linkroot + element.id + "/" + link + c;
                 } else {
                     return a + b + c;
                 }
-    
+
             }).bind(this));
-    
+
             // bring back linebreaks
             str = str.replace(/\u0000/g, "\n").trim();
-    
+
             callback(null, str);
         }).bind(this));
     };
-    
-    
+
+
     /**
      *  EPub#getChapterRaw(id, callback) -> undefined
      *  - id (String): Manifest id value for a chapter
@@ -708,32 +712,32 @@ class EPub extends EventEmitter {
      **/
     getChapterRaw(id, callback) {
         if (this.manifest[id]) {
-    
+
             if (!(this.manifest[id]['media-type'] == "application/xhtml+xml" || this.manifest[id]['media-type'] == "image/svg+xml")) {
                 return callback(new Error("Invalid mime type for chapter"));
             }
-    
+
             this.zip.readFile(this.manifest[id].href, (function (err, data) {
                 if (err) {
                     callback(new Error("Reading archive failed"));
                     return;
                 }
-    
+
                 var str = "";
                 if (data) {
                   str = data.toString("utf-8");
                 };
 
-    
+
                 callback(null, str);
-    
+
             }).bind(this));
         } else {
             callback(new Error("File not found"));
         }
     };
-    
-    
+
+
     /**
      *  EPub#getImage(id, callback) -> undefined
      *  - id (String): Manifest id value for an image
@@ -745,18 +749,18 @@ class EPub extends EventEmitter {
      **/
     getImage(id, callback) {
         if (this.manifest[id]) {
-    
+
             if ((this.manifest[id]['media-type'] || "").toLowerCase().trim().substr(0, 6)  !=  "image/") {
                 return callback(new Error("Invalid mime type for image"));
             }
-    
+
             this.getFile(id, callback);
         } else {
             callback(new Error("File not found"));
         }
     };
-    
-    
+
+
     /**
      *  EPub#getFile(id, callback) -> undefined
      *  - id (String): Manifest id value for a file
@@ -767,24 +771,24 @@ class EPub extends EventEmitter {
      **/
     getFile(id, callback) {
         if (this.manifest[id]) {
-    
+
             this.zip.readFile(this.manifest[id].href, (function (err, data) {
                 if (err) {
                     callback(new Error("Reading archive failed"));
                     return;
                 }
-    
+
                 callback(null, data, this.manifest[id]['media-type']);
             }).bind(this));
         } else {
             callback(new Error("File not found"));
         }
     };
-    
-    
+
+
     readFile(filename, options, callback_) {
         var callback = arguments[arguments.length - 1];
-    
+
         if (typeof options === 'function' || !options) {
             this.zip.readFile(filename, callback);
         } else if (typeof options === 'string') {
